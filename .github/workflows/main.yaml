@@ -65,6 +65,33 @@ jobs:
     needs: build-and-push-ecr-image
     runs-on: self-hosted
     steps:
+      - name: Pre-clean and disk report (self-hosted)
+        run: |
+          echo "=== BEFORE CLEANUP ==="
+          df -h
+          docker system df || true
+
+          # Safe cleanup before deploy
+          docker container prune -f || true
+          docker image prune -af || true
+          docker volume prune -f || true
+          docker builder prune -af || true
+          rm -rf /tmp/* || true
+
+          echo "=== AFTER CLEANUP ==="
+          df -h
+          docker system df || true
+
+      - name: Fail early if root disk is low (<1.5GB free)
+        run: |
+          FREE_BYTES=$(df --output=avail -B1 / | tail -1 | tr -d ' ')
+          MIN_BYTES=$((1500*1024*1024))
+          echo "Free bytes on /: $FREE_BYTES"
+          if [ "$FREE_BYTES" -lt "$MIN_BYTES" ]; then
+            echo "ERROR: Not enough free disk on runner."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -96,6 +123,11 @@ jobs:
             -e AWS_REGION="${{ secrets.AWS_REGION }}" \
             "${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest"
 
-      - name: Clean previous images and containers
+      - name: Post-deploy cleanup + disk report
+        if: always()
         run: |
-          docker system prune -f
+          docker image prune -af || true
+          docker container prune -f || true
+          docker builder prune -af || true
+          df -h
+          docker system df || true
